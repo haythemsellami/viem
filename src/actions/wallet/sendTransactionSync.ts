@@ -231,8 +231,9 @@ export async function sendTransactionSync<
       // If `to` exists on the parameters, use that.
       if (parameters.to) return parameters.to
 
-      // If `to` is null, we are sending a deployment transaction.
-      if (parameters.to === null) return undefined
+      // An absent Monad destination encodes contract creation, including with authorizations.
+      if (parameters.to === null || (parameters.type as string) === 'monad')
+        return undefined
 
       // If no `to` exists, and we are sending a EIP-7702 transaction, use the
       // address of the first authorization in the list.
@@ -260,7 +261,8 @@ export async function sendTransactionSync<
           })
       }
 
-      const chainFormat = client.chain?.formatters?.transactionRequest?.format
+      const chainFormat = (chain ?? client.chain)?.formatters
+        ?.transactionRequest?.format
       const format = chainFormat || formatTransactionRequest
 
       const request = format(
@@ -457,6 +459,10 @@ export async function sendTransactionSync<
         const hash = (() => {
           const { data } = timeoutError
           if (typeof data === 'string' && isHash(data)) return data
+          // Monad signing returns canonical bytes; its submission wrapper is
+          // excluded from the transaction hash, even with empty auxiliary data.
+          if ((request.type as string) === 'monad')
+            return keccak256(signedTransaction)
           // An EIP-4844 network wrapper holds the signed payload, then the
           // blobs, commitments, and proofs. The hash covers only the payload.
           if (sliceHex(serializedTransaction, 0, 1) === '0x03') {

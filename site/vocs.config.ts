@@ -901,6 +901,7 @@ export default defineConfig({
                     text: 'Universal Transactions',
                     link: '/docs/monad/transactions',
                   },
+                  { text: 'RPC Integration', link: '/docs/monad/rpc' },
                 ],
               },
             ],

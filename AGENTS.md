@@ -73,6 +73,7 @@ This document contains general guidelines for AI agents working on the Viem code
 - **Type tests in `.test-d.ts`**; use Vitest's `expectTypeOf` in colocated `.test-d.ts` files to assert generic inference works. Type tests are first-class; write them alongside implementation. Run via `pnpm test:typecheck`.
 - **Snapshot inferred public types**; use type snapshots for public surfaces.
 - **No `any` leakage**; user-facing callback, return, and option types should not leak `any` unless the surrounding API already intentionally does.
+- **Retain formatter definition metadata**; custom response formatters need the metadata returned by `defineTransaction`/`defineBlock` for `ExtractChainFormatterReturnType` to recognize their narrower types. When base conversion would lose precision, spread the definition and replace its `format` function directly; verify public client read types as well as request types.
 - **Type inference after every feature**; check whether new types can be narrowed.
   - Add or update type tests when public inference changes.
 
@@ -94,6 +95,9 @@ This document contains general guidelines for AI agents working on the Viem code
 - **Alphabetical exports**; barrel/entrypoint export statements sort by module specifier; named-export lists and the exported declaration blocks of action/module files sort by exported name.
 - **Keep public APIs lean**; avoid exposing options for values the library can derive from existing inputs.
 - **Wire formats stay explicit**; serialization, RPC, RLP, ABI, and transaction-envelope code should keep wire-order and field-shape decisions visible at the call site.
+- **Audit envelope consumers**; a network wrapper can have a different hash from its canonical transaction. Check synchronous-send timeout recovery and every other local hash derivation when adding a `transactionEnvelope` hook.
+- **Exercise action variants and chain overrides**; a chain formatter or serializer working on a bound client does not establish correctness for per-action chain overrides, synchronous sending, or dropped-transaction replacement fallbacks.
+- **Replacement keys describe nonce semantics**; do not install a custom replacement key just to avoid a number-only lookup. Preserve standard sender/nonce recovery and accept bigint at the lookup boundary when the chain uses ordinary nonce slots.
 - **Opaque RLP values need iterative traversal**; Ox's recursive RLP codec and recursive validators can overflow on small, deeply nested inputs. Use explicit stacks for unknown nested values, check each decoded child against its enclosing list boundary, and reject cycles in caller-supplied arrays without rejecting shared acyclic lists.
 - **Nullable RPC omissions**; skip both `null` and `undefined` when copying optional fields from filled transactions.
 - **Bound CCIP batch fan-out**; cap total queries, nesting, and concurrent requests. Share one budget across recursive local batches.
@@ -162,6 +166,7 @@ This document contains general guidelines for AI agents working on the Viem code
   - Use `pnpm test --run <paths>` for focused runs.
   - Use `pnpm test --project core --bail=1` for core failures.
   - Use `--project tempo` for tempo work.
+- **Keep large RLP stress tests separate**; `TEST_RLP=true` enables generic large-list cases excluded by the normal test configuration and can exhaust the default Node heap. Use an explicit memory budget for those cases; ordinary RPC checks do not need that opt-in.
 - **Synchronize polling tests with observations**; await the initial callback before mining and await each expected emission. Fork startup can exceed the polling interval.
 - **Gate RPC reads during bulk mining in gap tests**; `anvil_mine` can span multiple polls and expose intermediate heads. Disable retries on mining requests because a timed-out request may already have mined its blocks.
 - **Mine pending transactions before balance baselines**; shared Anvil tests may leave pending transfers. Mine before measuring a balance delta so earlier tests cannot affect it.
@@ -235,6 +240,7 @@ This document contains general guidelines for AI agents working on the Viem code
 - **Types**; run `pnpm check:types` after TypeScript changes.
 - **Repo checks**; run `pnpm check:repo` when package metadata or workspace shape changes.
 - **Docs dev server**; use `pnpm docs:dev` for documentation UI work; `pnpm docs:build` builds the site.
+- **Build before Twoslash checks**; site examples resolve the package's generated declarations, so run `pnpm build` before `pnpm --filter site twoslash <pattern>` after a clean. Missing declarations otherwise report module-resolution errors for valid examples.
 - **`pnpm check` mutates**; it runs Biome with write and unsafe fixes. Use it only when intentionally applying lint/format fixes.
 - **`pnpm contracts:build` mutates generated contract artifacts**; it runs Forge and
   `scripts/generateTypedArtifacts.ts`.

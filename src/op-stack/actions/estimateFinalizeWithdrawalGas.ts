@@ -127,9 +127,6 @@ export async function estimateFinalizeWithdrawalGas<
     maxFeePerGas,
     maxPriorityFeePerGas,
     nonce,
-    // TODO: Not sure `chain` is necessary since it's not used downstream
-    // in `estimateContractGas` or `estimateGas`
-    // @ts-expect-error
     chain,
   } satisfies EstimateContractGasParameters
 

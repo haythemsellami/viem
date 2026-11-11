@@ -8,7 +8,7 @@ import type { Client } from '../../clients/createClient.js'
 import type { Transport } from '../../clients/transports/createTransport.js'
 import { BaseError } from '../../errors/base.js'
 import type { BlockTag } from '../../types/block.js'
-import type { Chain } from '../../types/chain.js'
+import type { Chain, DeriveChain } from '../../types/chain.js'
 import type { StateOverride } from '../../types/stateOverride.js'
 import type { TransactionRequest } from '../../types/transaction.js'
 import type { UnionOmit } from '../../types/utils.js'
@@ -44,8 +44,14 @@ import {
 
 export type EstimateGasParameters<
   chain extends Chain | undefined = Chain | undefined,
-> = UnionOmit<FormattedEstimateGas<chain>, 'from'> & {
+  chainOverride extends Chain | undefined = Chain | undefined,
+> = UnionOmit<
+  FormattedEstimateGas<DeriveChain<chain, chainOverride>>,
+  'from'
+> & {
   account?: Account | Address | undefined
+  /** Chain configuration to use for preparation and request formatting. */
+  chain?: chainOverride | null | undefined
   prepare?:
     | boolean
     | readonly PrepareTransactionRequestParameterType[]
@@ -107,11 +113,16 @@ export type EstimateGasErrorType = GetEstimateGasErrorReturnType<
 export async function estimateGas<
   chain extends Chain | undefined,
   account extends Account | undefined = undefined,
+  chainOverride extends Chain | undefined = undefined,
 >(
   client: Client<Transport, chain, account>,
-  args: EstimateGasParameters<chain>,
+  args: EstimateGasParameters<chain, chainOverride>,
 ): Promise<EstimateGasReturnType> {
-  const { account: account_ = client.account, prepare = true } = args
+  const {
+    account: account_ = client.account,
+    chain = client.chain,
+    prepare = true,
+  } = args
   const account = account_ ? parseAccount(account_) : undefined
 
   // `eth_fillTransaction` cannot apply block context or state overrides, so a
@@ -132,6 +143,9 @@ export async function estimateGas<
     const to = await (async () => {
       // If `to` exists on the parameters, use that.
       if (args.to) return args.to
+
+      // An absent Monad destination encodes contract creation, including with authorizations.
+      if ((args.type as string) === 'monad') return undefined
 
       // If no `to` exists, and we are sending a EIP-7702 transaction, use the
       // address of the first authorization in the list.
@@ -188,7 +202,8 @@ export async function estimateGas<
 
     assertRequest(args as AssertRequestParameters)
 
-    const chainFormat = client.chain?.formatters?.transactionRequest?.format
+    const chainFormat = (chain ?? client.chain)?.formatters?.transactionRequest
+      ?.format
     const format = chainFormat || formatTransactionRequest
 
     const request = format(
@@ -230,7 +245,7 @@ export async function estimateGas<
     throw getEstimateGasError(err as BaseError, {
       ...args,
       account,
-      chain: client.chain,
+      chain: chain ?? client.chain,
     })
   }
 }

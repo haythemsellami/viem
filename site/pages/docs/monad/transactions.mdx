@@ -12,7 +12,7 @@ Signing requires nonce (`0x01`), gas (`0x02`), a complete call (`0x03`), sender 
 
 ### Sign and Hash a Transfer
 
-Use a [local account](/docs/accounts/local/privateKeyToAccount) for raw ECDSA signing. The example key is for testing only. All transaction fields must already be filled; this module does not prepare RPC requests or estimate fees or gas.
+Use a [local account](/docs/accounts/local/privateKeyToAccount) for raw ECDSA signing. The example key is for testing only. `Transaction.sign` requires filled fields; use the opt-in [RPC integration](/docs/monad/rpc) for preparation and estimation.
 
 ```ts twoslash
 import { privateKeyToAccount } from 'viem/accounts'

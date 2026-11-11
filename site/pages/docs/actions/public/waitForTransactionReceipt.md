@@ -106,9 +106,9 @@ const transaction = await publicClient.waitForTransactionReceipt(
 
 ### replacement (optional)
 
-- **Type:** `{ from: Address, nonce: number, input?: Hex, to?: Address | null, value?: bigint }`
+- **Type:** `{ from: Address, nonce: number | bigint, input?: Hex, to?: Address | null, value?: bigint }`
 
-The sender and nonce of the Transaction, and optionally the fields it was sent with.
+The sender and nonce of the Transaction, and optionally the fields it was sent with. The nonce type follows the chain's transaction formatter. Configured Monad clients accept `bigint` to preserve the full nonce range; ordinary Ethereum clients retain number nonces.
 
 A node can drop a replaced Transaction before the wait first reads it. With `replacement`, the wait looks up the Transaction in its nonce slot with `eth_getTransactionBySenderAndNonce`, and detects a replacement mined before the wait started.
 

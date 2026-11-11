@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `viem/monad` module implements the proposed Monad universal transaction envelope, type `0x40`. It provides offline encoding, decoding, ECDSA signing, and hashing for the baseline transaction fields through the `Transaction` namespace.
+The `viem/monad` module implements the proposed Monad universal transaction envelope, type `0x40`. It provides canonical encoding, decoding, ECDSA signing, and hashing through `Transaction`, plus opt-in [RPC integration](/docs/monad/rpc) for the existing sender-paid baseline.
 
 Transactions contain a chain identifier and an ordered feature list. Decoding preserves unknown feature values as RLP byte strings or lists. Signing requires the supported cleartext baseline, so an unknown feature cannot silently change what a signer approves.
 
@@ -22,8 +22,9 @@ const serialized = Transaction.serialize(transaction)
 // @log: '0x40...'
 ```
 
-This module targets the draft's main encoding. It excludes auxiliary data, RPC integration, batching, and sponsorship. The example gas limit is illustrative; it does not establish the intrinsic gas cost or network availability of this transaction type.
+This module targets the draft's main encoding. Network submissions add an empty auxiliary list; nonempty auxiliary data, batching, and sponsorship are unsupported. The example gas limit is illustrative; it does not establish intrinsic gas cost or network availability.
 
 <Cards>
   <Card title="Universal Transactions" description="Build, encode, decode, sign, and hash a canonical envelope." icon="lucide:file-code" to="/docs/monad/transactions" />
+  <Card title="RPC Integration" description="Prepare, submit, and read baseline transactions with a configured client." icon="lucide:network" to="/docs/monad/rpc" />
 </Cards>

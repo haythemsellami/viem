@@ -53,8 +53,8 @@ export type GetTransactionParameters<blockTag extends BlockTag = 'latest'> =
     | {
         /** The sender of the transaction. */
         sender: Address
-        /** The nonce of the transaction on the sender. */
-        nonce: number
+        /** The nonce of the transaction on the sender. Use bigint for full-width nonces. */
+        nonce: number | bigint
       }
   >
 
@@ -138,7 +138,10 @@ export async function getTransaction<
       },
       { dedupe: Boolean(blockNumberHex) },
     )
-  } else if (sender && typeof nonce === 'number') {
+  } else if (
+    sender &&
+    (typeof nonce === 'number' || typeof nonce === 'bigint')
+  ) {
     transaction = await client.request(
       {
         method: 'eth_getTransactionBySenderAndNonce',

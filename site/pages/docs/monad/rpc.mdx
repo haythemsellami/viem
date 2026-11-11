@@ -1,0 +1,212 @@
+# RPC Integration
+
+## Overview
+
+`chainConfig` adds opt-in preparation, standard RPC field conversion, local ECDSA signing, and transaction/receipt/block formatting. Configure a node that implements the draft's `0x40` contract. Existing chain definitions do not enable this type automatically.
+
+Signing produces `0x40 || rlp([chainId, features])`. Submission produces `0x40 || rlp([chainId, features, []])`. The transaction hash is the hash of the signed canonical bytes. Empty auxiliary data changes the submission bytes but never enters that hash.
+
+Both `sendTransaction` and `sendTransactionSync` add the submission wrapper after signing. When synchronous submission times out without returning a hash, receipt recovery uses the signed canonical hash. Omitted or `null` destinations preserve contract creation, including with authorization lists.
+
+The scope is one call, paid by its sender, with existing access and authorization lists. There is no sponsorship, batching, encryption, or nonempty auxiliary data. Node gas schedules and consensus validity rules remain authoritative.
+
+## Recipes
+
+### Prepare and Send a Transaction
+
+Use [sendTransaction](/docs/actions/wallet/sendTransaction) with an explicit `type: 'monad'`. The configured client prepares missing fields, signs canonical bytes, and adds the submission wrapper. The example key is for testing only.
+
+```ts twoslash
+import { createWalletClient, defineChain, http } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
+import { monad } from 'viem/chains'
+import { chainConfig } from 'viem/monad'
+
+const chain = defineChain({ ...monad, ...chainConfig }) // [!code focus]
+const client = createWalletClient({
+  account: privateKeyToAccount(`0x${'1'.repeat(64)}`),
+  chain,
+  transport: http('http://localhost:8545'),
+})
+const hash = await client.sendTransaction({
+  type: 'monad', // [!code focus]
+  to: '0x0000000000000000000000000000000000000001',
+  value: 1n,
+})
+// @log: '0x...'
+```
+
+Use `to: null` for creation and supply initialization code as `data`. Explicit Ethereum transaction types retain their existing serialization. An omitted type uses ordinary Viem inference; it does not automatically select `0x40`.
+
+### Sign Canonical Data Before Submission
+
+[prepareTransactionRequest](/docs/actions/wallet/prepareTransactionRequest) fills the baseline fields. [signTransaction](/docs/actions/wallet/signTransaction) returns canonical bytes. Convert them explicitly before calling [sendRawTransaction](/docs/actions/wallet/sendRawTransaction), which forwards bytes unchanged.
+
+```ts twoslash
+import { createWalletClient, defineChain, http } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
+import { monad } from 'viem/chains'
+import { chainConfig, Submission, Transaction } from 'viem/monad'
+
+const client = createWalletClient({
+  account: privateKeyToAccount(`0x${'1'.repeat(64)}`),
+  chain: defineChain({ ...monad, ...chainConfig }),
+  transport: http('http://localhost:8545'),
+})
+const request = await client.prepareTransactionRequest({
+  type: 'monad',
+  to: '0x0000000000000000000000000000000000000001',
+  nonce: 7n,
+})
+const canonical = await client.signTransaction(request) // [!code focus]
+const transaction = Transaction.deserialize(canonical)
+const expectedHash = Transaction.hash(transaction) // [!code focus]
+const hash = await client.sendRawTransaction({
+  serializedTransaction: Submission.serialize(transaction), // [!code focus]
+})
+// @log: '0x...'
+```
+
+`hash` must equal `expectedHash`. Do not hash submission bytes or pass canonical bytes directly to a node that requires the three-field submission. `Transaction.deserialize` intentionally rejects submission wrappers.
+
+### Read Transactions and Receipts
+
+Configure the same chain on a public client for [getTransaction](/docs/actions/public/getTransaction), [getBlock](/docs/actions/public/getBlock), and [waitForTransactionReceipt](/docs/actions/public/waitForTransactionReceipt). Full blocks dispatch each embedded transaction through the custom formatter.
+
+```ts twoslash
+import { createPublicClient, defineChain, http } from 'viem'
+import { monad } from 'viem/chains'
+import { chainConfig } from 'viem/monad'
+
+const client = createPublicClient({
+  chain: defineChain({ ...monad, ...chainConfig }),
+  transport: http('http://localhost:8545'),
+})
+const transaction = await client.getTransaction({ hash: `0x${'1'.repeat(64)}` })
+// @log: { type: 'monad', nonce: 7n, ... }
+if (transaction.type === 'monad') {
+  transaction.nonce // [!code focus]
+  //          ^?
+}
+```
+
+Baseline RPC fields use `type: '0x40'`, quantity hex for integers, `input` in transaction responses, and `data` in requests. Nodes must preserve omitted versus explicitly empty access/authorization lists. Optional `raw` response data contains canonical bytes, never submission bytes.
+
+Preparation fetches pending nonces as `bigint`. Generic `getTransactionCount` and nonce managers still use numbers. Supply explicit bigint nonces when managing concurrent submissions. `getTransaction({ sender, nonce })` and `waitForTransactionReceipt({ replacement: { from, nonce } })` accept bigint nonces without converting them to numbers.
+
+Replacement tracking retains standard sender/nonce matching for both Monad and Ethereum transactions. When the original transaction has been dropped, supply `replacement` to enable nonce-slot lookup. If the node lacks that method, tracking scans blocks observed from the start of the wait.
+
+Replacement callbacks preserve the configured chain's transaction types. On a configured Monad client, a fetched Monad replacement has a bigint nonce; caller-provided original fields may carry either a number or bigint nonce. Ordinary Ethereum clients retain number nonce types.
+
+## `chainConfig`
+
+Chain configuration containing formatters, a preparation hook, a canonical serializer, and a submission wrapper.
+
+### Usage
+
+```ts twoslash
+import { defineChain } from 'viem'
+import { monad } from 'viem/chains'
+import { chainConfig } from 'viem/monad'
+
+const chain = defineChain({ ...monad, ...chainConfig })
+```
+
+Local ECDSA accounts must honor Viem's custom serializer contract. Injected-wallet and node-managed signing are unsupported by this integration. `eth_fillTransaction` is optional; preparation falls back to standard nonce, fee, and estimation methods when unavailable.
+
+Per-action `chain` overrides are supported for preparation, gas estimation, signing, and sending. The override selects request formatting as well as serialization, preserving explicit `0x40` requests and the local-signing restriction. Configure the public client with the same chain when reading responses.
+
+## `Submission.serialize`
+
+Encodes a canonical envelope with an empty auxiliary list for network submission.
+
+### Usage
+
+```ts twoslash
+import { Submission } from 'viem/monad'
+
+const serialized = Submission.serialize({ chainId: 143n, features: [] })
+// @log: '0x40c4818fc0c0'
+```
+
+### Parameters
+
+#### envelope
+
+- **Type:** `Transaction.Envelope`
+
+A structurally valid canonical envelope. Submission encoding does not establish that an envelope is signed or consensus-valid.
+
+```ts twoslash
+import { Submission } from 'viem/monad'
+
+Submission.serialize({ chainId: 143n, features: [] }) // [!code focus]
+```
+
+### Return Value
+
+`Submission.Serialized`
+
+Three-field bytes beginning with `0x40`.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | Canonical fields fail structural validation. |
+
+## `Submission.deserialize`
+
+Decodes a three-field network submission and returns its canonical envelope.
+
+### Usage
+
+```ts twoslash
+import { Submission, Transaction } from 'viem/monad'
+
+const transaction = Submission.deserialize('0x40c4818fc0c0')
+const hash = Transaction.hash(transaction)
+// @log: '0x...'
+```
+
+### Parameters
+
+#### serialized
+
+- **Type:** `Hex`
+
+Exactly three fields, with an empty auxiliary list. Nonempty auxiliary data, two-field canonical bytes, and trailing bytes are rejected.
+
+```ts twoslash
+import { Submission } from 'viem/monad'
+
+Submission.deserialize('0x40c4818fc0c0') // [!code focus]
+```
+
+### Return Value
+
+`Transaction.Envelope`
+
+The canonical envelope to pass to `Transaction.hash` or `Transaction.serialize`.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | Invalid type, wrapper shape, auxiliary data, or canonical fields. |
+| `Monad.Rlp.InvalidRlpError` | Invalid or noncanonical RLP encoding. |
+
+## `Formatters`
+
+`formatTransactionRequest`, `formatTransaction`, `formatBlock`, and `formatTransactionReceipt` implement the conversions used by `chainConfig`. `TransactionRequestMonad`, `TransactionRpc`, and `TransactionMonad` describe the baseline request and response shapes; `Authorization` retains bigint chain IDs and nonces.
+
+### Usage
+
+```ts twoslash
+import { Formatters } from 'viem/monad'
+
+const rpc = Formatters.formatTransactionRequest({ type: 'monad', nonce: 0n })
+// @log: { type: '0x40', nonce: '0x0' }
+```
+
+Formatters preserve standard Ethereum behavior for other transaction types. RPC conversion is separate from canonical RLP encoding, where integer zero is represented by an empty byte string rather than RPC quantity `0x0`.

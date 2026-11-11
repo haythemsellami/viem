@@ -203,7 +203,8 @@ export async function sendTransaction<
       if (parameters.to) return parameters.to
 
       // If `to` is null, we are sending a deployment transaction.
-      if (parameters.to === null) return undefined
+      if (parameters.to === null || (parameters.type as string) === 'monad')
+        return undefined
 
       // If no `to` exists, and we are sending a EIP-7702 transaction, use the
       // address of the first authorization in the list.
@@ -231,7 +232,8 @@ export async function sendTransaction<
           })
       }
 
-      const chainFormat = client.chain?.formatters?.transactionRequest?.format
+      const chainFormat = (chain ?? client.chain)?.formatters
+        ?.transactionRequest?.format
       const format = chainFormat || formatTransactionRequest
 
       const request = format(

@@ -21,6 +21,7 @@ import {
 import type { Chain } from '../../types/chain.js'
 import type { Hash, Hex } from '../../types/misc.js'
 import type { Transaction } from '../../types/transaction.js'
+import type { UnionOmit } from '../../types/utils.js'
 import { isAddressEqual } from '../../utils/address/isAddressEqual.js'
 import { getAction } from '../../utils/getAction.js'
 import { type ObserveErrorType, observe } from '../../utils/observe.js'
@@ -53,8 +54,10 @@ export type ReplacementReturnType<
   chain extends Chain | undefined = Chain | undefined,
 > = {
   reason: ReplacementReason
-  replacedTransaction: Transaction
-  transaction: Transaction
+  replacedTransaction: UnionOmit<GetTransactionReturnType<chain>, 'nonce'> & {
+    nonce: GetTransactionReturnType<chain>['nonce']
+  }
+  transaction: GetTransactionReturnType<chain>
   transactionReceipt: GetTransactionReceiptReturnType<chain>
 }
 
@@ -104,8 +107,8 @@ export type WaitForTransactionReceiptParameters<
         from: Address
         /** The calldata of the transaction. Identifies a repriced replacement. */
         input?: Hex | undefined
-        /** The nonce of the transaction. */
-        nonce: number
+        /** The nonce of the transaction. Use bigint for full-width nonces. */
+        nonce: GetTransactionReturnType<chain>['nonce']
         /** The recipient of the transaction. Identifies a repriced replacement. */
         to?: Address | null | undefined
         /** The value of the transaction (in wei). Identifies a repriced replacement. */
@@ -349,7 +352,9 @@ export async function waitForTransactionReceipt<
                   client,
                   getTransaction,
                   'getTransaction',
-                )({ hash: receipt_.transactionHash })) as Transaction
+                )({
+                  hash: receipt_.transactionHash,
+                })) as GetTransactionReturnType<chain>
               replacement.transactionReceipt = receipt_
             }
             done(() => {
@@ -488,8 +493,9 @@ export async function waitForTransactionReceipt<
                         replaced as Transaction,
                         found as Transaction,
                       ),
-                    replacedTransaction: replaced as Transaction,
-                    transaction: found as Transaction,
+                    replacedTransaction:
+                      replaced as ReplacementReturnType<chain>['replacedTransaction'],
+                    transaction: found,
                     transactionReceipt: receipt,
                   }
 
@@ -564,8 +570,10 @@ export async function waitForTransactionReceipt<
                     replaced as Transaction,
                     replacementTransaction,
                   ),
-                replacedTransaction: replaced as Transaction,
-                transaction: replacementTransaction,
+                replacedTransaction:
+                  replaced as ReplacementReturnType<chain>['replacedTransaction'],
+                transaction:
+                  replacementTransaction as GetTransactionReturnType<chain>,
                 transactionReceipt: receipt,
               }
 
