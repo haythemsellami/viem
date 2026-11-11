@@ -1,0 +1,29 @@
+# Monad
+
+## Overview
+
+The `viem/monad` module implements the proposed Monad universal transaction envelope, type `0x40`. It provides offline encoding, decoding, ECDSA signing, and hashing for the baseline transaction fields through the `Transaction` namespace.
+
+Transactions contain a chain identifier and an ordered feature list. Decoding preserves unknown feature values as RLP byte strings or lists. Signing requires the supported cleartext baseline, so an unknown feature cannot silently change what a signer approves.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const transaction = Transaction.from({
+  chainId: 143,
+  nonce: 7n,
+  gas: 21_000n,
+  to: '0x0000000000000000000000000000000000000001',
+  value: 1_000_000_000_000_000_000n,
+  maxPriorityFeePerGas: 2_000_000_000n,
+  maxFeePerGas: 50_000_000_000n,
+})
+const serialized = Transaction.serialize(transaction)
+// @log: '0x40...'
+```
+
+This module targets the draft's main encoding. It excludes auxiliary data, RPC integration, batching, and sponsorship. The example gas limit is illustrative; it does not establish the intrinsic gas cost or network availability of this transaction type.
+
+<Cards>
+  <Card title="Universal Transactions" description="Build, encode, decode, sign, and hash a canonical envelope." icon="lucide:file-code" to="/docs/monad/transactions" />
+</Cards>

@@ -63,6 +63,7 @@ This document contains general guidelines for AI agents working on the Viem code
 - **Read from `options.x` when normalizing a single field**; avoid inventing a second name.
   - Applies when transforming one option into a local of the same name.
 - **Ox helpers over ad hoc conversion**; use ox helpers like `Hex.fromNumber`, `Hex.toBytes`, `Bytes.fromHex`, `Value.fromGwei`, etc. instead of open-coded conversions.
+  - `Hex.fromNumber` and `Hex.trimLeft` can return odd-length quantity hex. For minimal RLP integer bytes, pad the quantity to `Hex.size(hex)` bytes with `Hex.padLeft` and encode zero as `'0x'`.
 - **Keep property order readable**; preserve the local ordering style. Do not alphabetize arrays, RLP tuples, ABI parameters, transaction fields, or other order-sensitive wire shapes.
 
 ## Type Inference Conventions
@@ -93,6 +94,7 @@ This document contains general guidelines for AI agents working on the Viem code
 - **Alphabetical exports**; barrel/entrypoint export statements sort by module specifier; named-export lists and the exported declaration blocks of action/module files sort by exported name.
 - **Keep public APIs lean**; avoid exposing options for values the library can derive from existing inputs.
 - **Wire formats stay explicit**; serialization, RPC, RLP, ABI, and transaction-envelope code should keep wire-order and field-shape decisions visible at the call site.
+- **Opaque RLP values need iterative traversal**; Ox's recursive RLP codec and recursive validators can overflow on small, deeply nested inputs. Use explicit stacks for unknown nested values, check each decoded child against its enclosing list boundary, and reject cycles in caller-supplied arrays without rejecting shared acyclic lists.
 - **Nullable RPC omissions**; skip both `null` and `undefined` when copying optional fields from filled transactions.
 - **Bound CCIP batch fan-out**; cap total queries, nesting, and concurrent requests. Share one budget across recursive local batches.
 - **Relay plugins are objects**; use `(context, next)` middleware and explicit post-fill hooks; keep request state off handler functions.
@@ -164,9 +166,12 @@ This document contains general guidelines for AI agents working on the Viem code
 - **Gate RPC reads during bulk mining in gap tests**; `anvil_mine` can span multiple polls and expose intermediate heads. Disable retries on mining requests because a timed-out request may already have mined its blocks.
 - **Mine pending transactions before balance baselines**; shared Anvil tests may leave pending transfers. Mine before measuring a balance delta so earlier tests cannot affect it.
 - **Verify type-test discovery**; if `pnpm test:typecheck` reports no files, temporarily
-  enable `typecheck` on the selected Vitest project with an explicit `.test-d.ts` include
-  and a targeted tsconfig extending `test/tsconfig.json` (`composite: false`). Restore
-  the test configuration afterward; a no-files run does not verify inference.
+  set the selected Vitest project's `typecheck.enabled` and `typecheck.only` to true,
+  give it an explicit `.test-d.ts` include and a targeted tsconfig extending
+  `test/tsconfig.json` (`composite: false`), and set its runtime `include` to `[]`.
+  Also pass the target type-test path on the CLI; the top-level `--typecheck.only`
+  flag alone can leave project runtime tests enabled. Restore the test configuration
+  afterward; a no-files run does not verify inference.
 - **Check for orphaned harness listeners before full-suite runs**; a killed test run can leave
   its proxy holding ports 8545/8645/8745/8845/9545/4337/4338, making later runs fail at global setup
   (`EADDRINUSE`) or time out en masse against the wedged instance. Check them with `lsof -nP`
@@ -235,6 +240,7 @@ This document contains general guidelines for AI agents working on the Viem code
   `scripts/generateTypedArtifacts.ts`.
 - **Install hooks can mutate**; `pnpm install` initializes Git submodules and rebuilds contracts.
   - Fresh binary packages may need `node node_modules/<pkg>/install.js`.
+- **Build JavaScript before declarations**; use `pnpm build` for the clean CJS → ESM → types sequence. Type checking or JavaScript builds with generated `src/_types` present can include duplicate `Window.ethereum` declarations; run `pnpm clean` before `pnpm check:types` when build output exists. If a CJS build fails after swapping trusted setups, restore them with `pnpm build:trustedSetups:end` before retrying.
 - **Contract dependencies use Git submodules**; `contracts/foundry.toml` remaps to packages in
   `contracts/lib`. `pnpm contracts:build` needs Foundry and runs on demand.
 - **Preserve canonical token definitions during generation**; match hand-authored tokens by

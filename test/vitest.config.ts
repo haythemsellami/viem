@@ -18,6 +18,10 @@ export default defineConfig({
       { find: '~test', replacement: join(__dirname, './src') },
       { find: /^viem$/, replacement: join(__dirname, '../src/index.ts') },
       {
+        find: /^viem\/monad$/,
+        replacement: join(__dirname, '../src/monad/index.ts'),
+      },
+      {
         find: /^viem\/tempo$/,
         replacement: join(__dirname, '../src/tempo/index.ts'),
       },
