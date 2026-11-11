@@ -165,7 +165,11 @@ export async function signTransaction<
         account,
         chainId,
       } as TransactionSerializable,
-      { serializer: client.chain?.serializers?.transaction },
+      {
+        serializer:
+          chain?.serializers?.transaction ??
+          client.chain?.serializers?.transaction,
+      },
     ) as Promise<SignTransactionReturnType<request>>
 
   return await client.request(

@@ -125,6 +125,18 @@ const transaction = await publicClient.getTransaction({
 })
 ```
 
+### nonce (optional)
+
+- **Type:** `number | bigint`
+
+The nonce to look up with `sender` using `eth_getTransactionBySenderAndNonce`. Use `bigint` for values above JavaScript's safe integer range. The node must support this method.
+
+### sender (optional)
+
+- **Type:** `Address`
+
+The sender address to look up with `nonce`.
+
 ## Example
 
 Check out the usage of `getTransaction` in the live [Fetching Transactions Example](https://stackblitz.com/github/wevm/viem/tree/main/examples/transactions_fetching-transactions) below.

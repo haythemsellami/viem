@@ -1,0 +1,6 @@
+{
+  "type": "module",
+  "types": "../_types/monad/index.d.ts",
+  "module": "../_esm/monad/index.js",
+  "main": "../_cjs/monad/index.js"
+}

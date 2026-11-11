@@ -94,6 +94,11 @@
       "import": "./_esm/linea/index.js",
       "default": "./_cjs/linea/index.js"
     },
+    "./monad": {
+      "types": "./_types/monad/index.d.ts",
+      "import": "./_esm/monad/index.js",
+      "default": "./_cjs/monad/index.js"
+    },
     "./node": {
       "types": "./_types/node/index.d.ts",
       "import": "./_esm/node/index.js",
@@ -185,6 +190,9 @@
       ],
       "experimental/erc7895": [
         "./_types/experimental/erc7895/index.d.ts"
+      ],
+      "monad": [
+        "./_types/monad/index.d.ts"
       ],
       "node": [
         "./_types/node/index.d.ts"

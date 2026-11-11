@@ -1,0 +1,357 @@
+# Universal Transactions
+
+## Overview
+
+`Transaction` handles `0x40 || rlp([chainId, features])`. Feature keys are unique, ascending, and exactly one byte. Baseline fields use minimally encoded unsigned integers: zero is an empty byte string. The signature placeholder is an empty **list**, encoded as `0xc0`.
+
+Encoding and decoding check present baseline field shapes without requiring every baseline feature. Nested lists are processed iteratively without a fixed depth limit; cyclic JavaScript values are rejected. This does not validate execution semantics, recover authorization-list authorities, or establish network acceptance.
+
+Signing requires nonce (`0x01`), gas (`0x02`), a complete call (`0x03`), sender signature slot (`0x06`), and fee caps (`0x07`). Only optional access (`0x04`) and authorization (`0x05`) lists may accompany them. The signing digest replaces the sender signature value with `[]`.
+
+## Recipes
+
+### Sign and Hash a Transfer
+
+Use a [local account](/docs/accounts/local/privateKeyToAccount) for raw ECDSA signing. The example key is for testing only. `Transaction.sign` requires filled fields; use the opt-in [RPC integration](/docs/monad/rpc) for preparation and estimation.
+
+```ts twoslash
+import { privateKeyToAccount } from 'viem/accounts'
+import { Transaction } from 'viem/monad'
+
+const account = privateKeyToAccount(
+  '0x0000000000000000000000000000000000000000000000000000000000000001',
+)
+const transaction = Transaction.from({
+  chainId: 143,
+  nonce: 7n,
+  gas: 21_000n,
+  to: '0x0000000000000000000000000000000000000001',
+  value: 1_000_000_000_000_000_000n,
+  maxPriorityFeePerGas: 2_000_000_000n,
+  maxFeePerGas: 50_000_000_000n,
+})
+const serialized = await Transaction.sign({ account, transaction }) // [!code focus]
+const decoded = Transaction.deserialize(serialized)
+const hash = Transaction.hash(decoded) // [!code focus]
+// @log: '0x...'
+```
+
+The final transaction hash includes the signature. `Transaction.sign` normalizes the sender signature to low-s, flipping recovery parity when necessary. `Transaction.getSignPayload(transaction)` returns the separate sender digest; signing it uses no EIP-191 personal-message prefix.
+
+Do not pass `Transaction.serialize` directly as a generic account serializer: signature insertion uses this module's `Transaction.sign`.
+
+### Encode Contract Creation and Optional Lists
+
+Omitting `to` encodes an empty destination. `data` becomes initialization code; `value` defaults to zero. An omitted access or authorization list produces no feature, while an explicit empty array produces a present, empty feature.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const transaction = Transaction.from({
+  accessList: [{ // [!code focus]
+    address: '0x0000000000000000000000000000000000000001',
+    storageKeys: ['0x0000000000000000000000000000000000000000000000000000000000000000'],
+  }],
+  authorizationList: [], // [!code focus]
+  chainId: 143n,
+  data: '0x60006000f3', // [!code focus]
+  gas: 100_000n,
+  maxFeePerGas: 1n,
+  maxPriorityFeePerGas: 0n,
+  nonce: 0xffffffffffffffffn, // [!code focus]
+})
+const serialized = Transaction.serialize(transaction)
+// @log: '0x40...'
+```
+
+The codec accepts the full `uint64` nonce range. Whether a transaction at a boundary nonce, or a combination of creation and authorization entries, is executable is determined by the protocol. Authorization entries use `{ address, chainId, nonce, r, s, yParity }`, with bigint integers except parity.
+
+### Preserve Unrecognized Features
+
+Pass an explicit envelope for structural encoding. Unknown values remain recursive RLP data; byte strings are not assumed to contain integers or embedded RLP. Keys are checked rather than sorted, and received bytes with trailing data or noncanonical RLP are rejected.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const serialized = Transaction.serialize({
+  chainId: 143n,
+  features: [['0xfe', ['0xc0', [], '0x0001']]], // [!code focus]
+})
+const decoded = Transaction.deserialize(serialized)
+// @log: { chainId: 143n, features: [['0xfe', ['0xc0', [], '0x0001']]] }
+```
+
+`0xfe` here is an opaque test key, not an assigned feature. This envelope can be encoded, decoded, and hashed, but `getSignPayload` and `sign` reject it. A three-element envelope containing auxiliary data is also rejected.
+
+## `Transaction.from`
+
+Builds a complete baseline envelope from familiar transaction fields.
+
+### Usage
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const transaction = Transaction.from({
+  chainId: 143, gas: 21_000n, maxFeePerGas: 1n,
+  maxPriorityFeePerGas: 0n, nonce: 0n,
+})
+```
+
+### Parameters
+
+#### parameters
+
+- **Type:** `Transaction.from.Parameters`
+
+Required: `chainId`, `gas`, `maxFeePerGas`, `maxPriorityFeePerGas`, and `nonce`. Optional: `accessList`, `authorizationList`, `data`, `signature`, `to`, and `value`. Chain identifiers accept bigint or safe numbers; other transaction integers use bigint. Priority fees cannot exceed the fee cap.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+// ---cut---
+const transaction = Transaction.from({
+  chainId: 143n, gas: 21_000n, maxFeePerGas: 1n,
+  maxPriorityFeePerGas: 0n, nonce: 0n,
+  signature: { yParity: 0, r: 1n, s: 1n }, // [!code focus]
+})
+```
+
+An optional supplied signature is structurally encoded, not checked against a sender. Omitting it inserts the signing placeholder. `sign` replaces it when re-signing. Only `sign` normalizes signatures; `from`, `serialize`, `deserialize`, and `hash` preserve supplied signature values, including high-s.
+
+### Return Value
+
+`Transaction.Envelope`
+
+A chain identifier and canonical ordered features.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | Invalid field shape, integer range, or fee caps. |
+
+## `Transaction.serialize`
+
+Encodes the two-element canonical envelope without auxiliary data.
+
+### Usage
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const serialized = Transaction.serialize({ chainId: 143n, features: [] })
+// @log: '0x40c3818fc0'
+```
+
+### Parameters
+
+#### envelope
+
+- **Type:** `Transaction.Envelope`
+
+The envelope to encode. Incomplete baseline envelopes are allowed for structural processing.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+// ---cut---
+Transaction.serialize({ chainId: 143n, features: [['0x01', '0x07']] }) // [!code focus]
+```
+
+### Return Value
+
+`Transaction.Serialized`
+
+Hex bytes beginning with `0x40`.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | Invalid feature ordering, byte strings, known-field encoding, or cyclic values. |
+
+## `Transaction.deserialize`
+
+Decodes canonical bytes into an envelope while retaining unknown features.
+
+### Usage
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const transaction = Transaction.deserialize('0x40c3818fc0')
+// @log: { chainId: 143n, features: [] }
+```
+
+### Parameters
+
+#### serialized
+
+- **Type:** `Hex`
+
+Canonical transaction bytes with exactly two outer list elements.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+// ---cut---
+Transaction.deserialize('0x40c3818fc0') // [!code focus]
+```
+
+### Return Value
+
+`Transaction.Envelope`
+
+The chain identifier as bigint and features as recursive byte strings or lists.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | Wrong type, malformed envelope, or invalid field encoding. |
+| `Monad.Rlp.InvalidRlpError` (error name) | Noncanonical RLP, truncated data, trailing bytes, or a value exceeding its enclosing list boundary. |
+
+## `Transaction.getSignPayload`
+
+Computes the baseline signing digest with feature `0x06` replaced by `[]`.
+
+### Usage
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const transaction = Transaction.from({ chainId: 143, gas: 21_000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 0n, nonce: 0n })
+const digest = Transaction.getSignPayload(transaction)
+// @log: '0x...'
+```
+
+### Parameters
+
+#### envelope
+
+- **Type:** `Transaction.Envelope`
+
+A complete baseline envelope with supported features and all three call fields.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+const envelope = Transaction.from({ chainId: 143, gas: 21_000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 0n, nonce: 0n })
+// ---cut---
+Transaction.getSignPayload(envelope) // [!code focus]
+```
+
+### Return Value
+
+`Hex`
+
+The 32-byte digest for raw ECDSA signing.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | Malformed or incomplete baseline, or priority fee above the fee cap. |
+| `Transaction.UnsupportedFeatureError` | Unrecognized feature or call-field signing rules. |
+
+## `Transaction.hash`
+
+Computes keccak256 of the canonical encoded envelope, including any signature.
+
+### Usage
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const hash = Transaction.hash(Transaction.deserialize('0x40c3818fc0'))
+// @log: '0x...'
+```
+
+### Parameters
+
+#### envelope
+
+- **Type:** `Transaction.Envelope`
+
+The structurally valid envelope to hash. Use the signed envelope to obtain the final transaction identifier.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+// ---cut---
+Transaction.hash({ chainId: 143n, features: [] }) // [!code focus]
+```
+
+### Return Value
+
+`Hex`
+
+The 32-byte canonical envelope hash.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | The envelope cannot be canonically serialized. |
+
+## `Transaction.sign`
+
+Signs the baseline sender digest and returns the canonical signed bytes.
+
+### Usage
+
+```ts twoslash
+import { privateKeyToAccount } from 'viem/accounts'
+import { Transaction } from 'viem/monad'
+
+const account = privateKeyToAccount('0x0000000000000000000000000000000000000000000000000000000000000001')
+const transaction = Transaction.from({ chainId: 143, gas: 21_000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 0n, nonce: 0n })
+const serialized = await Transaction.sign({ account, transaction })
+// @log: '0x40...'
+```
+
+### Parameters
+
+#### parameters.account
+
+- **Type:** `Pick<LocalAccount, 'address' | 'sign'>`
+
+The local ECDSA account. Raw signing must return a 65-byte signature, which is checked against the account address. High-s signatures are normalized using `s = n - s` and flipped recovery parity. Signer errors propagate to the caller.
+
+```ts twoslash
+import { privateKeyToAccount } from 'viem/accounts'
+import { Transaction } from 'viem/monad'
+const transaction = Transaction.from({ chainId: 143, gas: 21_000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 0n, nonce: 0n })
+// ---cut---
+const account = privateKeyToAccount('0x0000000000000000000000000000000000000000000000000000000000000001')
+await Transaction.sign({ account, transaction }) // [!code focus]
+```
+
+#### parameters.transaction
+
+- **Type:** `Transaction.Envelope`
+
+The complete baseline envelope. The module snapshots its data before awaiting the signer and replaces any existing sender signature.
+
+```ts twoslash
+import { privateKeyToAccount } from 'viem/accounts'
+import { Transaction } from 'viem/monad'
+const account = privateKeyToAccount('0x0000000000000000000000000000000000000000000000000000000000000001')
+// ---cut---
+const transaction = Transaction.from({ chainId: 143, gas: 21_000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 0n, nonce: 0n })
+await Transaction.sign({ account, transaction }) // [!code focus]
+```
+
+### Return Value
+
+`Promise<Transaction.Serialized>`
+
+Signed canonical bytes. This function does not submit them.
+
+### Errors
+
+| Error | Description |
+| --- | --- |
+| `Transaction.InvalidEnvelopeError` | Invalid baseline, unavailable raw signer, malformed signature size, or signer/address mismatch. |
+| `Transaction.UnsupportedFeatureError` | Unsupported feature or call field. |
+| `Signature.InvalidYParityError` | Invalid signature recovery parity. |
+
+## `Transaction.Envelope`
+
+Contains `chainId: bigint` and `features: readonly Transaction.Feature[]`. Each feature is `[key, value]`, where the key is a one-byte hex string and `Transaction.Value` is a hex byte string or a readonly recursive list. The envelope is independent of Viem's generic transaction and RPC types.

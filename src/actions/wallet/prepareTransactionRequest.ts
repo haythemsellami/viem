@@ -426,7 +426,12 @@ export async function prepareTransactionRequest<
     // Check if `eth_fillTransaction` needs to be called.
     if (parameters.includes('chainId') && typeof request.chainId !== 'number')
       return true
-    if (parameters.includes('nonce') && typeof nonce !== 'number') return true
+    if (
+      parameters.includes('nonce') &&
+      typeof nonce !== 'number' &&
+      typeof nonce !== 'bigint'
+    )
+      return true
     if (
       parameters.includes('fees') &&
       typeof request.gasPrice !== 'bigint' &&
@@ -743,6 +748,7 @@ export async function prepareTransactionRequest<
     )({
       ...request,
       account,
+      chain,
       prepare: account?.type === 'local' ? [] : ['blobVersionedHashes'],
     } as EstimateGasParameters)
 

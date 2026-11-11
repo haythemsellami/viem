@@ -893,6 +893,17 @@ export default defineConfig({
                 text: 'OP Stack',
                 link: '/op-stack',
               },
+              {
+                text: 'Monad',
+                items: [
+                  { text: 'Overview', link: '/docs/monad' },
+                  {
+                    text: 'Universal Transactions',
+                    link: '/docs/monad/transactions',
+                  },
+                  { text: 'RPC Integration', link: '/docs/monad/rpc' },
+                ],
+              },
             ],
           },
         ],

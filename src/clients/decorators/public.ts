@@ -587,8 +587,8 @@ export type PublicActions<
    *   value: parseEther('1'),
    * })
    */
-  estimateGas: (
-    args: EstimateGasParameters<chain>,
+  estimateGas: <chainOverride extends Chain | undefined = undefined>(
+    args: EstimateGasParameters<chain, chainOverride>,
   ) => Promise<EstimateGasReturnType>
   /**
    * Fills a transaction request with the necessary fields to be signed over.
