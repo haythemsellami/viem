@@ -1286,6 +1286,8 @@ export type PublicRpcSchema = [
          * applied. Only reported by nodes that support it.
          */
         maxUsedGas?: Hex | undefined
+        /** Per-entry results supplied for an atomic native batch. */
+        calls?: readonly { returnData: Hex; status: Hex | null }[] | undefined
         returnData: Hex
         status: Hex
       }[]

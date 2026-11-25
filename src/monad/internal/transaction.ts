@@ -31,7 +31,6 @@ export function quantity(
 export function assertRequest(request: Formatters.TransactionRequestMonad) {
   for (const key of [
     'gasPrice',
-    'calls',
     'feePayer',
     'auxiliaryData',
     'features',
@@ -50,11 +49,26 @@ export function assertRequest(request: Formatters.TransactionRequestMonad) {
     ['nonce', 64],
     ['gas', 64],
     ['value', 256],
-    ['maxFeePerGas', 256],
-    ['maxPriorityFeePerGas', 256],
-    ['chainId', 256],
+    ['maxFeePerGas', 128],
+    ['maxPriorityFeePerGas', 128],
+    ['chainId', 64],
   ] as const)
     if (request[key] !== undefined) quantity(request[key], bits, key)
+  if (request.calls !== undefined) {
+    for (const key of ['to', 'value', 'data', 'input'] as const)
+      if ((request as unknown as Record<string, unknown>)[key] !== undefined)
+        throw new Transaction.InvalidEnvelopeError(
+          `calls cannot be combined with ${key}.`,
+        )
+    Transaction.from({
+      chainId: 0,
+      nonce: 0n,
+      gas: 0n,
+      maxFeePerGas: 0n,
+      maxPriorityFeePerGas: 0n,
+      calls: request.calls,
+    })
+  }
 }
 
 export function serializeTransaction(
@@ -78,14 +92,15 @@ export function serializeTransaction(
       throw new Transaction.InvalidEnvelopeError(
         `${key} is required for signing.`,
       )
+  const { calls, data, to, value, ...fields } = request
   const envelope = Transaction.from({
-    ...request,
+    ...fields,
     chainId: request.chainId!,
     nonce: quantity(request.nonce!, 64, 'nonce'),
     gas: request.gas!,
     maxFeePerGas: request.maxFeePerGas!,
     maxPriorityFeePerGas: request.maxPriorityFeePerGas!,
-    to: request.to ?? undefined,
+    ...(calls === undefined ? { to: to ?? undefined, data, value } : { calls }),
     authorizationList: request.authorizationList?.map((authorization) => ({
       ...authorization,
       chainId: quantity(authorization.chainId, 256, 'authorization.chainId'),

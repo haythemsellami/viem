@@ -100,6 +100,7 @@ This document contains general guidelines for AI agents working on the Viem code
 - **Replacement keys describe nonce semantics**; do not install a custom replacement key just to avoid a number-only lookup. Preserve standard sender/nonce recovery and accept bigint at the lookup boundary when the chain uses ordinary nonce slots.
 - **Opaque RLP values need iterative traversal**; Ox's recursive RLP codec and recursive validators can overflow on small, deeply nested inputs. Use explicit stacks for unknown nested values, check each decoded child against its enclosing list boundary, and reject cycles in caller-supplied arrays without rejecting shared acyclic lists.
 - **Nullable RPC omissions**; skip both `null` and `undefined` when copying optional fields from filled transactions.
+- **Preserve discriminants during field extraction**; chain request formatters can select extension fields using `type`. Include that discriminant when extracting extra fields, or a fill request can silently lose its call list.
 - **Bound CCIP batch fan-out**; cap total queries, nesting, and concurrent requests. Share one budget across recursive local batches.
 - **Relay plugins are objects**; use `(context, next)` middleware and explicit post-fill hooks; keep request state off handler functions.
 - **Relay forwarding transports do not retry**; keep retry policy at downstream I/O, including explicit per-request overrides.

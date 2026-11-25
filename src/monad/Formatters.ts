@@ -41,18 +41,18 @@ export type Authorization = {
 }
 
 /** Baseline sender-paid Monad request. Use `to: null` for contract creation. */
-export type TransactionRequestMonad = TransactionRequestEIP1559<
-  bigint,
-  bigint,
-  'monad'
-> & {
-  /** Existing authorization tuples; omission and an empty list are distinct. */
-  authorizationList?: readonly Authorization[] | undefined
-  /** Configured EVM chain identifier. Must be a safe integer. */
-  chainId?: number | undefined
-  /** Explicit selection of the universal transaction type. */
-  type: 'monad'
-}
+export type TransactionRequestMonad = Omit<
+  TransactionRequestEIP1559<bigint, bigint, 'monad'>,
+  'to' | 'data' | 'value'
+> &
+  Transaction.CallRequest & {
+    /** Existing authorization tuples; omission and an empty list are distinct. */
+    authorizationList?: readonly Authorization[] | undefined
+    /** Configured EVM chain identifier. Must be a safe integer. */
+    chainId?: number | undefined
+    /** Explicit selection of the universal transaction type. */
+    type: 'monad'
+  }
 
 /** Requests supported by the opt-in Monad chain configuration. */
 export type TransactionRequest = EthereumRequest | TransactionRequestMonad
@@ -63,20 +63,43 @@ export type TransactionRequestRpc = TransactionRequestEIP1559<
   Hex.Hex,
   '0x40'
 > & {
+  /** Ordered entries for CALLS; scalar to, value and data must be absent. */
+  calls?:
+    | readonly {
+        /** Destination; null or omitted selects creation at index zero. */
+        to?: Address | null | undefined
+        /** Native amount as an RPC quantity. */
+        value: Hex.Hex
+        /** Call data or initcode. */
+        input: Hex.Hex
+      }[]
+    | undefined
   /** Existing authorization tuples, with RPC quantity encoding. */
   authorizationList?: RpcAuthorizationList | undefined
   /** Chain identifier as an RPC quantity. */
   chainId?: Hex.Hex | undefined
 }
 
-/** Formatted baseline transaction. Optional list presence is preserved. */
+/** An attempted native entry, including entries whose effects were rolled back. */
+export type ExecutedCall = {
+  /** Destination, or null for creation. */
+  to: Address | null
+  /** Native amount in wei. */
+  value: bigint
+  /** Executed call data or initcode. */
+  input: Hex.Hex
+}
+
+/** Formatted native execution view. Fetch canonical bytes to recover signed intent. */
 export type TransactionMonad = Omit<
   TransactionEIP1559,
   'accessList' | 'authorizationList' | 'nonce' | 'type'
 > & {
-  /** Access list, absent if its feature was omitted. */
+  /** Attempted entries. Pending transactions return an empty array. */
+  calls?: readonly ExecutedCall[] | undefined
+  /** Access list. Older nodes may omit it. */
   accessList?: AccessList | undefined
-  /** Authorization list, absent if its feature was omitted. */
+  /** Authorization list. Older nodes may omit it. */
   authorizationList?: readonly Authorization[] | undefined
   /** Sender nonce without integer precision loss. */
   nonce: bigint
@@ -86,12 +109,16 @@ export type TransactionMonad = Omit<
   type: 'monad'
 }
 
-/** Baseline RPC transaction. Nodes must preserve omitted versus present list features. */
+/** Native RPC execution view. New nodes normalize missing lists to empty arrays. */
 export type TransactionRpc = Omit<
   TransactionEIP1559<Hex.Hex, Hex.Hex, boolean, '0x40'>,
   'accessList' | 'authorizationList' | 'typeHex'
 > & {
-  /** Access list, absent if its feature was omitted. */
+  /** Attempted entries in execution order; not the complete signed payload. */
+  calls?:
+    | readonly (Omit<ExecutedCall, 'value'> & { value: Hex.Hex })[]
+    | undefined
+  /** Access list. Older nodes may omit it. */
   accessList?: AccessList | undefined
   /** Existing authorization tuples in RPC form. */
   authorizationList?: RpcAuthorizationList | undefined
@@ -137,7 +164,7 @@ export function formatTransaction(
     return formatEthereumTransaction(
       transaction as ExactPartial<RpcTransaction>,
     )
-  const { authorizationList, nonce, raw, ...rest } = transaction
+  const { authorizationList, calls, nonce, raw, ...rest } = transaction
   // The base formatter must never see full-width nonces or authorization quantities.
   const formatted = formatEthereumTransaction({
     ...rest,
@@ -149,6 +176,14 @@ export function formatTransaction(
   return {
     ...formatted,
     ...(raw !== undefined ? { raw } : {}),
+    ...(calls === undefined
+      ? {}
+      : {
+          calls: calls.map((call) => ({
+            ...call,
+            value: internal.quantity(call.value, 256, 'calls.value'),
+          })),
+        }),
     authorizationList:
       authorizationList == null
         ? undefined
@@ -200,7 +235,7 @@ export function formatTransactionRequest(
       'Monad transactions require a local ECDSA account.',
     )
   type WithAccount = TransactionRequestMonad & { account?: Account | undefined }
-  const { account, authorizationList, chainId } = request as WithAccount
+  const { account, authorizationList, calls, chainId } = request as WithAccount
   const result = {
     ...formatEthereumRequest({
       ...request,
@@ -210,6 +245,12 @@ export function formatTransactionRequest(
     type: '0x40',
   } as TransactionRequestRpc
   if (account) result.from = account.address
+  if (calls !== undefined)
+    result.calls = calls.map((call) => ({
+      to: call.to,
+      value: Hex.fromNumber(call.value ?? 0n),
+      input: call.data ?? '0x',
+    }))
   if (chainId !== undefined)
     result.chainId = Hex.fromNumber(internal.quantity(chainId, 256, 'chainId'))
   if (authorizationList !== undefined)

@@ -43,12 +43,26 @@ test('prepared baseline requests compose with signing and sending', async () => 
   })
   // @ts-expect-error Baseline requests require bigint nonces.
   await wallet.sendTransaction({ type: 'monad', nonce: 0 })
-  const unsupported = {
+  const batch = {
     type: 'monad',
-    // @ts-expect-error Batching is not part of baseline requests.
-    calls: [],
+    calls: [{ to: account.address, value: 1n }],
   } satisfies Formatters.TransactionRequestMonad
-  expectTypeOf(unsupported).not.toBeAny()
+  const preparedBatch = await wallet.prepareTransactionRequest(batch)
+  expectTypeOf(preparedBatch.calls![0]!.value).toEqualTypeOf<
+    bigint | undefined
+  >()
+  await wallet.signTransaction(preparedBatch)
+  await wallet.sendTransaction(batch)
+  await wallet.sendTransactionSync(batch)
+  await client.call(batch)
+  await client.estimateGas(batch)
+  // @ts-expect-error Scalar call fields cannot accompany a batch.
+  const mixed: Formatters.TransactionRequestMonad = {
+    type: 'monad',
+    calls: [],
+    to: account.address,
+  }
+  expectTypeOf(mixed).not.toBeAny()
 })
 
 test('read and simulation actions retain the custom type and full-width values', async () => {
@@ -125,4 +139,34 @@ test('sender/nonce lookup and dropped-transaction recovery accept bigint nonces'
       expectTypeOf(transaction.nonce).toEqualTypeOf<number>()
     },
   })
+})
+
+test('native batch simulation preserves request types and per-entry outcomes', async () => {
+  const request = {
+    type: 'monad',
+    calls: [{ to: account.address, data: '0x1234' }],
+  } as const
+  const result = await client.simulateBlocks({
+    blocks: [{ calls: [request] }],
+    validation: true,
+  })
+  expectTypeOf(result[0]!.calls[0].calls![0]!.status).toEqualTypeOf<
+    'success' | 'failure' | null
+  >()
+  await client.createAccessList(request)
+  const filled = await client.fillTransaction(request)
+  const canonical = Transaction.deserialize(filled.raw)
+  await Transaction.sign({ account, transaction: canonical })
+  const transaction = await client.getTransaction({ hash: '0x' })
+  if (transaction.type === 'monad' && transaction.calls) {
+    Transaction.from({
+      chainId: 143,
+      nonce: 1n,
+      gas: 21000n,
+      maxFeePerGas: 1n,
+      maxPriorityFeePerGas: 0n,
+      // @ts-expect-error Executed calls are not complete signing requests.
+      calls: transaction.calls,
+    })
+  }
 })

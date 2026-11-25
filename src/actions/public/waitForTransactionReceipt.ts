@@ -107,6 +107,8 @@ export type WaitForTransactionReceiptParameters<
         from: Address
         /** The calldata of the transaction. Identifies a repriced replacement. */
         input?: Hex | undefined
+        /** Canonical signed bytes for chains whose RPC transaction is an execution view. */
+        raw?: Hex | undefined
         /** The nonce of the transaction. Use bigint for full-width nonces. */
         nonce: GetTransactionReturnType<chain>['nonce']
         /** The recipient of the transaction. Identifies a repriced replacement. */
@@ -485,10 +487,18 @@ export async function waitForTransactionReceipt<
                   receipt = replacementReceipt
                   replacementResponse = {
                     reason:
-                      client.chain?.transactionReplacement?.getReason?.({
-                        replaced,
-                        replacement: found,
-                      }) ??
+                      (await client.chain?.transactionReplacement?.getReason?.(
+                        {
+                          replaced: {
+                            ...replaced,
+                            raw:
+                              replacement?.raw ??
+                              (replaced as Transaction & { raw?: Hex }).raw,
+                          },
+                          replacement: found,
+                        },
+                        { client },
+                      )) ??
                       getReplacementReason(
                         replaced as Transaction,
                         found as Transaction,
@@ -562,10 +572,18 @@ export async function waitForTransactionReceipt<
               })
               replacementResponse = {
                 reason:
-                  client.chain?.transactionReplacement?.getReason?.({
-                    replaced,
-                    replacement: replacementTransaction,
-                  }) ??
+                  (await client.chain?.transactionReplacement?.getReason?.(
+                    {
+                      replaced: {
+                        ...replaced,
+                        raw:
+                          replacement?.raw ??
+                          (replaced as Transaction & { raw?: Hex }).raw,
+                      },
+                      replacement: replacementTransaction,
+                    },
+                    { client },
+                  )) ??
                   getReplacementReason(
                     replaced as Transaction,
                     replacementTransaction,

@@ -6,9 +6,30 @@
 
 Encoding and decoding check present baseline field shapes without requiring every baseline feature. Nested lists are processed iteratively without a fixed depth limit; cyclic JavaScript values are rejected. This does not validate execution semantics, recover authorization-list authorities, or establish network acceptance.
 
-Signing requires nonce (`0x01`), gas (`0x02`), a complete call (`0x03`), sender signature slot (`0x06`), and fee caps (`0x07`). Only optional access (`0x04`) and authorization (`0x05`) lists may accompany them. The signing digest replaces the sender signature value with `[]`.
+Signing requires nonce (`0x01`), gas (`0x02`), either a complete call (`0x03`) or a nonempty ordered call list (`0x08`), sender signature slot (`0x06`), and fee caps (`0x07`). Only optional access (`0x04`) and authorization (`0x05`) lists may accompany them. The signing digest replaces the sender signature value with `[]`.
 
 ## Recipes
+
+### Build an Atomic Batch
+
+Pass `calls` with `{ to, value, data }` entries instead of scalar `to`, `value`, and `data`. Only the first entry may create a contract. Even a one-entry list retains feature `0x08`. Entries execute in order with one nonce, gas limit, and aggregate receipt; failure rolls back every entry's state changes while consuming the nonce and fees.
+
+```ts twoslash
+import { Transaction } from 'viem/monad'
+
+const transaction = Transaction.from({
+  chainId: 143, nonce: 0n, gas: 100_000n,
+  maxFeePerGas: 100_000_000_000n, maxPriorityFeePerGas: 0n,
+  calls: [
+    { to: '0x0000000000000000000000000000000000000001', value: 1n },
+    { to: '0x0000000000000000000000000000000000000002', data: '0x' },
+  ],
+})
+// @log: { chainId: 143n, features: [...] }
+```
+
+Native signing requires uint64 chain ID, nonce, and gas, uint128 fee caps, and uint256 call values. Each additional entry adds 21,000 intrinsic gas; calldata, access-list, and creation charges apply as specified by the node.
+
 
 ### Sign and Hash a Transfer
 
@@ -104,7 +125,7 @@ const transaction = Transaction.from({
 
 - **Type:** `Transaction.from.Parameters`
 
-Required: `chainId`, `gas`, `maxFeePerGas`, `maxPriorityFeePerGas`, and `nonce`. Optional: `accessList`, `authorizationList`, `data`, `signature`, `to`, and `value`. Chain identifiers accept bigint or safe numbers; other transaction integers use bigint. Priority fees cannot exceed the fee cap.
+Required: `chainId`, `gas`, `maxFeePerGas`, `maxPriorityFeePerGas`, and `nonce`. Optional: `accessList`, `authorizationList`, `calls`, `data`, `signature`, `to`, and `value`. Chain identifiers accept bigint or safe numbers; other transaction integers use bigint. Priority fees cannot exceed the fee cap.
 
 ```ts twoslash
 import { Transaction } from 'viem/monad'

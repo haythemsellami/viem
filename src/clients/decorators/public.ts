@@ -1776,7 +1776,7 @@ export type PublicActions<
    * @deprecated Use `simulateBlocks` instead.
    */
   simulate: <const calls extends readonly unknown[]>(
-    args: SimulateBlocksParameters<calls>,
+    args: SimulateBlocksParameters<calls, chain>,
   ) => Promise<SimulateBlocksReturnType<calls>>
   /**
    * Simulates a set of calls on block(s) with optional block and state overrides.
@@ -1821,7 +1821,7 @@ export type PublicActions<
    * @returns Simulated blocks. {@link SimulateReturnType}
    */
   simulateBlocks: <const calls extends readonly unknown[]>(
-    args: SimulateBlocksParameters<calls>,
+    args: SimulateBlocksParameters<calls, chain>,
   ) => Promise<SimulateBlocksReturnType<calls>>
   /**
    * Simulates a set of calls.
