@@ -2,6 +2,47 @@ import { chainConfig, Formatters, Transaction } from 'viem/monad'
 import { expect, test } from 'vitest'
 
 const address = '0x0000000000000000000000000000000000000001'
+
+test('batch requests map data to input and response quantities to bigint', () => {
+  const formatted = Formatters.formatTransactionRequest({
+    type: 'monad',
+    calls: [{ to: address, value: 1n, data: '0x0001' }, { to: address }],
+  })
+  expect(formatted).toMatchInlineSnapshot(`
+    {
+      "calls": [
+        {
+          "input": "0x0001",
+          "to": "0x0000000000000000000000000000000000000001",
+          "value": "0x1",
+        },
+        {
+          "input": "0x",
+          "to": "0x0000000000000000000000000000000000000001",
+          "value": "0x0",
+        },
+      ],
+      "type": "0x40",
+    }
+  `)
+  const rpc = {
+    type: '0x40',
+    calls: [
+      {
+        to: address,
+        value:
+          '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        input: '0x0001',
+      },
+    ],
+  } as const
+  const transaction = Formatters.formatTransaction(rpc)
+  expect(transaction.type === 'monad' && transaction.calls).toEqual([
+    { ...rpc.calls[0], value: 2n ** 256n - 1n },
+  ])
+  const pending = Formatters.formatTransaction({ type: '0x40', calls: [] })
+  expect(pending.type === 'monad' && pending.calls).toEqual([])
+})
 const request = {
   type: 'monad',
   chainId: 143,

@@ -150,7 +150,8 @@ export type ChainConfig<
 type ReplacementTransaction = {
   from: Address
   hash: `0x${string}`
-  nonce: number
+  raw?: `0x${string}` | undefined
+  nonce: number | bigint
 }
 
 /**
@@ -172,10 +173,16 @@ export type ChainTransactionReplacement = {
    * @default Compares `to`, `value`, and `input`.
    */
   getReason?:
-    | ((parameters: {
-        replaced: ReplacementTransaction
-        replacement: ReplacementTransaction
-      }) => ReplacementReason)
+    | ((
+        parameters: {
+          replaced: ReplacementTransaction
+          replacement: ReplacementTransaction
+        },
+        context: { client: Client },
+      ) =>
+        | ReplacementReason
+        | undefined
+        | Promise<ReplacementReason | undefined>)
     | undefined
 }
 

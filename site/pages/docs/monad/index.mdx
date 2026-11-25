@@ -22,7 +22,7 @@ const serialized = Transaction.serialize(transaction)
 // @log: '0x40...'
 ```
 
-This module targets the draft's main encoding. Network submissions add an empty auxiliary list; nonempty auxiliary data, batching, and sponsorship are unsupported. The example gas limit is illustrative; it does not establish intrinsic gas cost or network availability.
+This module targets the draft's main encoding. Network submissions add an empty auxiliary list; native batching uses CALLS feature `0x08`; nonempty auxiliary data and sponsorship are unsupported. The example gas limit is illustrative; it does not establish intrinsic gas cost or network availability.
 
 <Cards>
   <Card title="Universal Transactions" description="Build, encode, decode, sign, and hash a canonical envelope." icon="lucide:file-code" to="/docs/monad/transactions" />

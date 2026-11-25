@@ -5,6 +5,7 @@ import { defineTransaction } from '../utils/formatters/transaction.js'
 import { defineTransactionReceipt } from '../utils/formatters/transactionReceipt.js'
 import type { SerializeTransactionFn } from '../utils/transaction/serializeTransaction.js'
 import * as Formatters from './Formatters.js'
+import * as replacement from './internal/replacement.js'
 import * as internal from './internal/transaction.js'
 import * as Submission from './Submission.js'
 import * as Transaction from './Transaction.js'
@@ -82,6 +83,7 @@ export const chainConfig = {
     },
     { runAt: ['beforeFillTransaction', 'afterFillParameters'] },
   ],
+  transactionReplacement: { getReason: replacement.getReason },
   serializers: {
     transaction: internal.serializeTransaction as SerializeTransactionFn,
     transactionEnvelope: ({ serializedTransaction, transaction }) =>

@@ -25,6 +25,32 @@ export type Envelope = {
 /** A serialized canonical Monad universal transaction. */
 export type Serialized = `0x40${string}`
 
+/** One ordered native call. An absent destination selects contract creation. */
+export type Call = {
+  /** RPC execution views use input; construct signed intent with data instead. */
+  input?: undefined
+  /** Call data or creation initcode. Defaults to empty bytes. */
+  data?: Hex.Hex | undefined
+  /** Destination; only the first entry may omit it or use null. */
+  to?: Address | null | undefined
+  /** Native token amount in wei. Defaults to zero. */
+  value?: bigint | undefined
+}
+
+/** Mutually exclusive scalar call or atomic batch parameters. */
+export type CallRequest =
+  | (Call & { /** Select the scalar CALL feature. */ calls?: undefined })
+  | {
+      /** Nonempty, atomic call list; one entry still selects CALLS. */
+      calls: readonly Call[]
+      /** Scalar data is incompatible with calls. */
+      data?: undefined
+      /** Scalar destination is incompatible with calls. */
+      to?: undefined
+      /** Scalar value is incompatible with calls. */
+      value?: undefined
+    }
+
 /**
  * Decodes a canonical envelope, preserving unknown features and omitted fields.
  * Validates RLP canonicality and the shape of present baseline fields, without
@@ -80,6 +106,7 @@ export function from(parameters: from.Parameters): Envelope {
     accessList,
     authorizationList,
     chainId,
+    calls,
     data = '0x',
     gas,
     maxFeePerGas,
@@ -89,6 +116,15 @@ export function from(parameters: from.Parameters): Envelope {
     to,
     value = 0n,
   } = parameters
+  if (
+    calls !== undefined &&
+    (parameters.to !== undefined ||
+      parameters.value !== undefined ||
+      parameters.data !== undefined)
+  )
+    throw new InvalidEnvelopeError(
+      'calls cannot be combined with to, value, or data.',
+    )
   if (typeof chainId === 'number' && !Number.isSafeInteger(chainId))
     throw new InvalidEnvelopeError('chainId must be a safe integer or bigint.')
   const envelope: Envelope = {
@@ -96,14 +132,9 @@ export function from(parameters: from.Parameters): Envelope {
     features: [
       ['0x01', encodeInteger(nonce, 64, 'nonce')],
       ['0x02', encodeInteger(gas, 64, 'gas')],
-      [
-        '0x03',
-        [
-          ['0x01', to ?? '0x'],
-          ['0x02', encodeInteger(value, 256, 'value')],
-          ['0x03', data],
-        ],
-      ],
+      ...(calls === undefined
+        ? [['0x03', encodeCall({ to, value, data })] as const]
+        : []),
       ...(accessList === undefined
         ? []
         : ([
@@ -145,10 +176,13 @@ export function from(parameters: from.Parameters): Envelope {
       [
         '0x07',
         [
-          encodeInteger(maxPriorityFeePerGas, 256, 'maxPriorityFeePerGas'),
-          encodeInteger(maxFeePerGas, 256, 'maxFeePerGas'),
+          encodeInteger(maxPriorityFeePerGas, 128, 'maxPriorityFeePerGas'),
+          encodeInteger(maxFeePerGas, 128, 'maxFeePerGas'),
         ],
       ],
+      ...(calls === undefined
+        ? []
+        : [['0x08', calls.map(encodeCall)] as const]),
     ],
   }
   assertBaseline(envelope)
@@ -185,8 +219,6 @@ export declare namespace from {
       | undefined
     /** Chain identifier. Numbers must be safe integers. */
     chainId: bigint | number
-    /** Call data or contract initialization code. Defaults to empty bytes. */
-    data?: Hex.Hex | undefined
     /** Gas limit, an unsigned 64-bit integer. */
     gas: bigint
     /** Maximum inclusion fee per gas. */
@@ -197,11 +229,7 @@ export declare namespace from {
     nonce: bigint
     /** Sender signature. Omit to encode an empty RLP list for signing. */
     signature?: Signature.Signature | undefined
-    /** Destination. Omit for contract creation (an empty destination byte string). */
-    to?: Address | undefined
-    /** Native token amount, in wei. Defaults to zero. */
-    value?: bigint | undefined
-  }
+  } & CallRequest
   export type ReturnValue = Envelope
   export type ErrorType = InvalidEnvelopeError | UnsupportedFeatureError
 }
@@ -439,6 +467,27 @@ function featureMap(value: unknown, name: string): readonly Feature[] {
   return entries as readonly Feature[]
 }
 
+function encodeCall(call: Call): readonly Feature[] {
+  if ((call as { input?: unknown }).input !== undefined)
+    throw new InvalidEnvelopeError(
+      'RPC execution calls cannot be signed; supply the complete call list using data.',
+    )
+  return [
+    ['0x01', call.to ?? '0x'],
+    ['0x02', encodeInteger(call.value ?? 0n, 256, 'value')],
+    ['0x03', call.data ?? '0x'],
+  ]
+}
+
+function assertCall(value: Value): void {
+  for (const [field, value_] of featureMap(value, 'call')) {
+    if (field === '0x01' && value_ !== '0x')
+      assertBytes(value_, 'destination', 20)
+    if (field === '0x02') integer(value_, 256, 'value')
+    if (field === '0x03') assertBytes(value_, 'data')
+  }
+}
+
 function assertEnvelope(envelope: Envelope): void {
   encodeInteger(envelope.chainId, 256, 'chainId')
   for (const [key, value] of featureMap(envelope.features, 'features')) {
@@ -448,12 +497,10 @@ function assertEnvelope(envelope: Envelope): void {
         integer(value, 64, key === '0x01' ? 'nonce' : 'gas')
         break
       case '0x03':
-        for (const [field, value_] of featureMap(value, 'call')) {
-          if (field === '0x01' && value_ !== '0x')
-            assertBytes(value_, 'destination', 20)
-          if (field === '0x02') integer(value_, 256, 'value')
-          if (field === '0x03') assertBytes(value_, 'data')
-        }
+        assertCall(value)
+        break
+      case '0x08':
+        for (const call of list(value, 'calls')) assertCall(call)
         break
       case '0x04':
         for (const entry of list(value, 'accessList')) {
@@ -497,33 +544,44 @@ function assertEnvelope(envelope: Envelope): void {
 
 function assertBaseline(envelope: Envelope): void {
   assertEnvelope(envelope)
+  encodeInteger(envelope.chainId, 64, 'chainId')
   for (const [key] of envelope.features)
-    if (Hex.toNumber(key) < 1 || Hex.toNumber(key) > 7)
+    if (Hex.toNumber(key) < 1 || Hex.toNumber(key) > 8)
       throw new UnsupportedFeatureError(key)
-  for (const key of ['0x01', '0x02', '0x03', '0x06', '0x07'])
+  for (const key of ['0x01', '0x02', '0x06', '0x07'])
     if (!envelope.features.some(([feature]) => feature === key))
       throw new InvalidEnvelopeError(
         `Baseline signing requires feature ${key}.`,
       )
-  const call = featureMap(
-    envelope.features.find(([key]) => key === '0x03')![1],
-    'call',
-  )
-  for (const [key] of call)
-    if (!['0x01', '0x02', '0x03'].includes(key))
-      throw new UnsupportedFeatureError(key, 'call field')
-  if (call.length !== 3)
-    throw new InvalidEnvelopeError(
-      'Baseline signing requires destination, value, and data.',
-    )
+  const single = envelope.features.find(([key]) => key === '0x03')
+  const batch = envelope.features.find(([key]) => key === '0x08')
+  if (Boolean(single) === Boolean(batch))
+    throw new InvalidEnvelopeError('Exactly one of CALL and CALLS is required.')
+  const calls = batch ? list(batch[1], 'calls') : [single![1]]
+  if (calls.length === 0)
+    throw new InvalidEnvelopeError('calls must not be empty.')
+  for (const [index, value] of calls.entries()) {
+    const call = featureMap(value, 'call')
+    for (const [key] of call)
+      if (!['0x01', '0x02', '0x03'].includes(key))
+        throw new UnsupportedFeatureError(key, 'call field')
+    if (call.length !== 3)
+      throw new InvalidEnvelopeError(
+        'Baseline signing requires destination, value, and data.',
+      )
+    if (index > 0 && call[0]?.[1] === '0x')
+      throw new InvalidEnvelopeError(
+        'Only the first batch entry may create a contract.',
+      )
+  }
   const [priority, max] = tuple(
     envelope.features.find(([key]) => key === '0x07')![1],
     2,
     'inclusion gas bid',
   )
   if (
-    integer(priority, 256, 'maxPriorityFeePerGas') >
-    integer(max, 256, 'maxFeePerGas')
+    integer(priority, 128, 'maxPriorityFeePerGas') >
+    integer(max, 128, 'maxFeePerGas')
   )
     throw new InvalidEnvelopeError(
       'maxPriorityFeePerGas cannot exceed maxFeePerGas.',

@@ -120,6 +120,7 @@ async function setup(
           'maxPriorityFeePerGas',
           'accessList',
           'authorizationList',
+          'calls',
         ].includes(key)
       )
         throw new Error(`Unexpected request field ${key}.`)
@@ -147,8 +148,9 @@ async function setup(
           gas: '0x6000',
           maxFeePerGas: '0x14',
           maxPriorityFeePerGas: '0x2',
-          input: request.data ?? '0x',
-          value: request.value ?? '0x0',
+          ...(request.calls === undefined
+            ? { input: request.data ?? '0x', value: request.value ?? '0x0' }
+            : {}),
         },
       }
     }
@@ -368,6 +370,26 @@ async function setup(
     transport,
   }
 }
+
+test('fill retains batch fields when extracting chain-specific request properties', async () => {
+  const { client } = await setup({ fill: true })
+  const result = await client.fillTransaction({
+    account,
+    type: 'monad',
+    calls: [
+      { to: destination, value: 1n, data: '0x1234' },
+      { to: destination, value: 2n },
+    ],
+  })
+
+  expect(result.transaction).toMatchObject({
+    type: 'monad',
+    calls: [
+      { to: destination, value: 1n, input: '0x1234' },
+      { to: destination, value: 2n, input: '0x' },
+    ],
+  })
+})
 
 test('prepares, signs, submits, reads, and waits using canonical identity', async () => {
   const { wallet, client, submissions } = await setup()

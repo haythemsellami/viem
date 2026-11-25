@@ -154,7 +154,7 @@ export async function fillTransaction<
   const request = format(
     {
       // Pick out extra data that might exist on the chain's transaction request type.
-      ...extract(rest, { format: chainFormat }),
+      ...extract({ ...rest, type }, { format: chainFormat }),
       account: account ? parseAccount(account) : undefined,
       accessList,
       authorizationList,

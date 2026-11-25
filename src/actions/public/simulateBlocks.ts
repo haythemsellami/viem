@@ -14,7 +14,7 @@ import { UnknownNodeError } from '../../errors/node.js'
 import type { ErrorType } from '../../errors/utils.js'
 import type { Account } from '../../types/account.js'
 import type { Block, BlockTag } from '../../types/block.js'
-import type { Call, Calls } from '../../types/calls.js'
+import type { Call } from '../../types/calls.js'
 import type { Chain } from '../../types/chain.js'
 import type { Log } from '../../types/log.js'
 import type { Hex } from '../../types/misc.js'
@@ -47,6 +47,7 @@ import {
 import { formatLog } from '../../utils/formatters/log.js'
 import {
   type FormatTransactionRequestErrorType,
+  type FormattedTransactionRequest,
   formatTransactionRequest,
 } from '../../utils/formatters/transactionRequest.js'
 import {
@@ -58,27 +59,45 @@ import {
   assertRequest,
 } from '../../utils/transaction/assertRequest.js'
 
-type CallExtraProperties = ExactPartial<
-  UnionOmit<
-    TransactionRequest,
-    'blobs' | 'data' | 'kzg' | 'to' | 'sidecars' | 'value'
-  >
-> & {
-  /** Account attached to the call (msg.sender). */
-  account?: Account | Address | undefined
-  /** Recipient. `null` if contract deployment. */
-  to?: Address | null | undefined
-}
+type CallExtraProperties<chain extends Chain | undefined = Chain | undefined> =
+  ExactPartial<
+    UnionOmit<
+      FormattedTransactionRequest<chain>,
+      'blobs' | 'data' | 'kzg' | 'to' | 'sidecars' | 'value'
+    >
+  > & {
+    /** Account attached to the call (msg.sender). */
+    account?: Account | Address | undefined
+    /** Recipient. `null` if contract deployment. */
+    to?: Address | null | undefined
+  }
+
+type SimulationCalls<
+  calls extends readonly unknown[],
+  chain extends Chain | undefined,
+> = readonly unknown[] extends calls
+  ? calls
+  : {
+      [index in keyof calls]: calls[index] extends { calls: readonly unknown[] }
+        ? Extract<
+            FormattedTransactionRequest<chain>,
+            { calls?: readonly unknown[] }
+          > & {
+            account?: Account | Address | undefined
+          }
+        : Call<calls[index], CallExtraProperties<chain>>
+    }
 
 export type SimulateBlocksParameters<
   calls extends readonly unknown[] = readonly unknown[],
+  chain extends Chain | undefined = Chain | undefined,
 > = {
   /** Blocks to simulate. */
   blocks: readonly {
     /** Block overrides. */
     blockOverrides?: BlockOverrides.BlockOverrides | undefined
     /** Calls to execute. */
-    calls: Calls<Narrow<calls>, CallExtraProperties>
+    calls: SimulationCalls<Narrow<calls>, chain>
     /** State overrides. */
     stateOverrides?: StateOverride | undefined
   }[]
@@ -113,6 +132,10 @@ export type SimulateBlocksReturnType<
     {
       extraProperties: {
         data: Hex
+        /** Per-entry results of an atomic native batch; null means unattempted. */
+        calls?:
+          | readonly { data: Hex; status: 'success' | 'failure' | null }[]
+          | undefined
         gasUsed: bigint
         logs?: Log[] | undefined
         /**
@@ -190,7 +213,7 @@ export async function simulateBlocks<
   const calls extends readonly unknown[],
 >(
   client: Client<Transport, chain>,
-  parameters: SimulateBlocksParameters<calls>,
+  parameters: SimulateBlocksParameters<calls, chain>,
 ): Promise<SimulateBlocksReturnType<calls>> {
   const {
     blockNumber,
@@ -207,7 +230,7 @@ export async function simulateBlocks<
       const blockOverrides = block.blockOverrides
         ? BlockOverrides.toRpc(block.blockOverrides)
         : undefined
-      const calls = block.calls.map((call_) => {
+      const calls = (block.calls as readonly unknown[]).map((call_) => {
         const call = call_ as Call<unknown, CallExtraProperties>
         const account = call.account ? parseAccount(call.account) : undefined
         const data = call.abi ? encodeFunctionData(call) : call.data
@@ -220,7 +243,10 @@ export async function simulateBlocks<
           from: call.from ?? account?.address,
         } as const
         assertRequest(request)
-        return formatTransactionRequest(request)
+        const format =
+          client.chain?.formatters?.transactionRequest?.format ??
+          formatTransactionRequest
+        return format(request as TransactionRequest, 'simulateBlocks')
       })
       const stateOverrides = block.stateOverrides
         ? serializeStateOverride(block.stateOverrides)
@@ -246,7 +272,7 @@ export async function simulateBlocks<
     })
 
     return result.map((block, i) => ({
-      ...formatBlock(block),
+      ...(client.chain?.formatters?.block?.format ?? formatBlock)(block),
       calls: block.calls.map((call, j) => {
         const { abi, args, functionName, to } = blocks[i].calls[j] as Call<
           unknown,
@@ -287,6 +313,19 @@ export async function simulateBlocks<
 
         return {
           data,
+          ...(call.calls === undefined
+            ? {}
+            : {
+                calls: call.calls.map((entry) => ({
+                  data: entry.returnData,
+                  status:
+                    entry.status === null
+                      ? null
+                      : entry.status === '0x1'
+                        ? 'success'
+                        : 'failure',
+                })),
+              }),
           gasUsed,
           logs,
           // only present when reported by the node, so existing consumers

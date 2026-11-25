@@ -8,7 +8,7 @@ Signing produces `0x40 || rlp([chainId, features])`. Submission produces `0x40 |
 
 Both `sendTransaction` and `sendTransactionSync` add the submission wrapper after signing. When synchronous submission times out without returning a hash, receipt recovery uses the signed canonical hash. Omitted or `null` destinations preserve contract creation, including with authorization lists.
 
-The scope is one call, paid by its sender, with existing access and authorization lists. There is no sponsorship, batching, encryption, or nonempty auxiliary data. Node gas schedules and consensus validity rules remain authoritative.
+The scope is sender-paid CALL or atomic CALLS transactions with access lists. Native authorization feature `0x05`, sponsorship, encryption, and nonempty auxiliary data are disabled by the node profile. Existing Ethereum delegation transactions and already delegated senders remain supported. Node gas schedules and consensus validity rules remain authoritative.
 
 ## Recipes
 
@@ -90,13 +90,27 @@ if (transaction.type === 'monad') {
 }
 ```
 
-Baseline RPC fields use `type: '0x40'`, quantity hex for integers, `input` in transaction responses, and `data` in requests. Nodes must preserve omitted versus explicitly empty access/authorization lists. Optional `raw` response data contains canonical bytes, never submission bytes.
+Baseline RPC fields use `type: '0x40'`, quantity hex for integers, `input` in transaction responses, and `data` in requests. Updated nodes normalize access/authorization lists to `[]` when absent. RPC JSON does not preserve canonical feature presence. Optional `raw` response data contains canonical bytes, never submission bytes.
 
 Preparation fetches pending nonces as `bigint`. Generic `getTransactionCount` and nonce managers still use numbers. Supply explicit bigint nonces when managing concurrent submissions. `getTransaction({ sender, nonce })` and `waitForTransactionReceipt({ replacement: { from, nonce } })` accept bigint nonces without converting them to numbers.
 
 Replacement tracking retains standard sender/nonce matching for both Monad and Ethereum transactions. When the original transaction has been dropped, supply `replacement` to enable nonce-slot lookup. If the node lacks that method, tracking scans blocks observed from the start of the wait.
 
 Replacement callbacks preserve the configured chain's transaction types. On a configured Monad client, a fetched Monad replacement has a bigint nonce; caller-provided original fields may carry either a number or bigint nonce. Ordinary Ethereum clients retain number nonce types.
+
+### Send and Simulate a Batch
+
+Supply `type: 'monad'` and `calls: [{ to, value, data }, ...]` to the configured wallet's `sendTransaction`. The same shape works with [call](/docs/actions/public/call), [estimateGas](/docs/actions/public/estimateGas), and [simulateBlocks](/docs/actions/public/simulateBlocks). The request formatter sends each entry's data as RPC `input` and omits scalar fields.
+
+`eth_call` returns the last attempted entry's output or the failing entry's revert data. `eth_estimateGas` estimates the whole batch. `eth_simulateV1` adds nested entry results; Viem exposes these as `calls: [{ data, status }]`, with `status: null` for unattempted entries.
+
+The node must enable `--enable-eth-simulate-v1`. Its current simulation implementation supports validation mode only; provide sufficient `maxFeePerGas` and `maxPriorityFeePerGas` for each transaction being simulated. Ordinary `call` and `estimateGas` requests can omit fees.
+
+Transaction queries return **attempted entries**, including the failing entry and earlier rolled-back entries. Pending transactions return `calls: []`. Scalar `to`, `value`, and `input` describe exactly one attempted entry; otherwise they are `null`, `0n`, and `'0x'`. Receipts remain aggregate; `to` follows the same projection and `contractAddress` identifies an actual first-entry creation.
+
+Do not reconstruct a signed transaction from query JSON. Fetch `debug_getRawTransaction`, deserialize the canonical bytes, and verify `Transaction.hash(envelope)` against the requested hash. Likewise, after `fillTransaction`, sign `Transaction.deserialize(result.raw)` rather than the formatted execution-view object.
+
+Replacement detection compares full canonical intent, fetching raw transactions when necessary. If either intent is unavailable, it conservatively reports `replaced` rather than guessing from the attempted prefix. Pass the original canonical bytes as `replacement.raw` when tracking a dropped transaction.
 
 ## `chainConfig`
 

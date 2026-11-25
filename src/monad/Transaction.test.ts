@@ -20,6 +20,104 @@ const parameters = {
   maxFeePerGas: 50_000_000_000n,
 } as const
 
+test('batch encoding agrees with independent RLP and commits every entry', async () => {
+  const transaction = Transaction.from({
+    ...parameters,
+    to: undefined,
+    value: undefined,
+    calls: [
+      { to: destination, value: 1n, data: '0x0001' },
+      { to: account.address, value: 2n },
+    ],
+  })
+  const expected = encodeRlp([
+    '0x8f',
+    [
+      ['0x01', '0x07'],
+      ['0x02', '0x5208'],
+      ['0x06', []],
+      ['0x07', ['0x77359400', '0x0ba43b7400']],
+      [
+        '0x08',
+        [
+          [
+            ['0x01', destination],
+            ['0x02', '0x01'],
+            ['0x03', '0x0001'],
+          ],
+          [
+            ['0x01', account.address],
+            ['0x02', '0x02'],
+            ['0x03', '0x'],
+          ],
+        ],
+      ],
+    ],
+  ])
+  expect(Transaction.serialize(transaction)).toEqual(`0x40${expected.slice(2)}`)
+  const signed = await Transaction.sign({ account, transaction })
+  const decoded = Transaction.deserialize(signed)
+  expect(decoded.features.at(-1)).toEqual(
+    Transaction.deserialize(Transaction.serialize(transaction)).features.at(-1),
+  )
+  expect(Transaction.getSignPayload(decoded)).toEqual(
+    keccak256(`0x40${expected.slice(2)}`),
+  )
+  expect(Transaction.deserialize(Transaction.serialize(decoded))).toEqual(
+    decoded,
+  )
+  const batch = decoded.features.find(
+    ([key]) => key === '0x08',
+  )![1] as readonly Transaction.Value[]
+  expect(
+    Transaction.hash(replaceFeature(decoded, '0x08', [...batch].reverse())),
+  ).not.toEqual(Transaction.hash(decoded))
+})
+
+test('one-entry batches retain feature identity and creation is first only', () => {
+  const batch = Transaction.from({
+    ...parameters,
+    to: undefined,
+    value: undefined,
+    calls: [{ to: destination, value: parameters.value }],
+  })
+  expect(Transaction.hash(batch)).not.toEqual(
+    Transaction.hash(Transaction.from(parameters)),
+  )
+  const create = Transaction.from({
+    ...parameters,
+    to: undefined,
+    value: undefined,
+    calls: [{ data: '0x60006000f3' }, { to: destination }],
+  })
+  expect(Transaction.deserialize(Transaction.serialize(create))).toEqual(create)
+  for (const calls of [[], [{ to: destination }, {}], [{}, {}]] as const)
+    expect(() =>
+      Transaction.from({
+        ...parameters,
+        to: undefined,
+        value: undefined,
+        calls,
+      }),
+    ).toThrow(Transaction.InvalidEnvelopeError)
+  expect(() =>
+    Transaction.from({
+      ...parameters,
+      calls: [{ to: destination }],
+    } as unknown as Transaction.from.Parameters),
+  ).toThrow(Transaction.InvalidEnvelopeError)
+  const mixed = {
+    ...batch,
+    features: [
+      ...Transaction.from(parameters).features,
+      batch.features.at(-1)!,
+    ],
+  }
+  expect(() => Transaction.getSignPayload(mixed)).toThrow(
+    Transaction.InvalidEnvelopeError,
+  )
+})
+
 // Independent RLP construction of the draft's baseline example.
 const fields = [
   '0x8f',
@@ -162,15 +260,15 @@ describe('from', () => {
     `)
   })
 
-  test('preserves full uint64 and uint256 values and optional lists', () => {
+  test('preserves native numeric widths and optional lists', () => {
     const transaction = Transaction.from({
       ...parameters,
-      chainId: (1n << 256n) - 1n,
+      chainId: (1n << 64n) - 1n,
       nonce: (1n << 64n) - 1n,
       gas: (1n << 64n) - 1n,
       value: (1n << 256n) - 1n,
-      maxFeePerGas: (1n << 256n) - 1n,
-      maxPriorityFeePerGas: (1n << 256n) - 1n,
+      maxFeePerGas: (1n << 128n) - 1n,
+      maxPriorityFeePerGas: (1n << 128n) - 1n,
       accessList: [
         {
           address: destination,
@@ -194,7 +292,7 @@ describe('from', () => {
     expect(decoded).toEqual(transaction)
     expect(decoded).toMatchInlineSnapshot(`
       {
-        "chainId": 115792089237316195423570985008687907853269984665640564039457584007913129639935n,
+        "chainId": 18446744073709551615n,
         "features": [
           [
             "0x01",
@@ -257,8 +355,8 @@ describe('from', () => {
           [
             "0x07",
             [
-              "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-              "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "0xffffffffffffffffffffffffffffffff",
+              "0xffffffffffffffffffffffffffffffff",
             ],
           ],
         ],
@@ -643,7 +741,9 @@ describe('getSignPayload and hash', () => {
       }
 
       expect(() => Transaction.getSignPayload(incomplete)).toThrow(
-        `Baseline signing requires feature ${missing}`,
+        missing === '0x03'
+          ? 'Exactly one of CALL and CALLS is required.'
+          : `Baseline signing requires feature ${missing}`,
       )
     },
   )
